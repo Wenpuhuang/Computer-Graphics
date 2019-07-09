@@ -1,0 +1,396 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+    <title>test</title>
+    <script src="./config.js"></script>
+
+</head>
+<body>
+<canvas id="myCanvas" width="800" height="600" style="border:1px solid #c3c3c3;">
+    Your browser does not support the canvas element.
+</canvas>
+<script type="text/javascript">
+
+    //该函数在一个canvas上绘制一个点
+    //其中cxt是从canvas中获得的一个2d上下文context
+    //    x,y分别是该点的横纵坐标
+    //    color是表示颜色的整形数组，形如[r,g,b]
+    //    color在这里会本转化为表示颜色的字符串，其内容也可以是：
+    //        直接用颜色名称:   "red" "green" "blue"
+    //        十六进制颜色值:   "#EEEEFF"
+    //        rgb分量表示形式:  "rgb(0-255,0-255,0-255)"
+    //        rgba分量表示形式:  "rgba(0-255,1-255,1-255,透明度)"
+    //由于canvas本身没有绘制单个point的接口，所以我们通过绘制一条短路径替代
+    function drawPoint(cxt, x, y, color) {
+        //建立一条新的路径
+        cxt.beginPath();
+        //设置画笔的颜色
+        cxt.strokeStyle = "rgb(" + color[0] + "," +
+            +color[1] + "," +
+            +color[2] + ")";
+        //设置路径起始位置
+        cxt.moveTo(x, y);
+        //在路径中添加一个节点
+        cxt.lineTo(x + 1, y + 1);
+        //用画笔颜色绘制路径
+        cxt.stroke();
+    }
+
+    //绘制线段的函数绘制一条从(x1,y1)到(x2,y2)的线段，cxt和color两个参数意义与绘制点的函数相同，
+    function drawLine(cxt, x1, y1, x2, y2, color) {
+
+        cxt.beginPath();
+        cxt.strokeStyle = "rgba(" + color[0] + "," +
+            +color[1] + "," +
+            +color[2] + "," +
+            +255 + ")";
+        //这里线宽取1会有色差，但是类似半透明的效果有利于debug，取2效果较好
+        cxt.lineWidth = 1;
+        cxt.moveTo(x1, y1);
+        cxt.lineTo(x2, y2);
+        cxt.stroke();
+    }
+
+    //start
+
+    var maxY = 1024;
+    var point = [];
+    var mouseX, mouseY;
+    var chlik;
+    var dragHoldX, dragHoldY;
+    var index = 10;  //第几个点
+    var c = document.getElementById("myCanvas");  //获取画布id为myCanvasvar
+    var cxt = c.getContext("2d");                 //获取绘图2D环境
+
+    //将canvas坐标整体偏移0.5，用于解决宽度为1个像素的线段的绘制问题，具体原理详见project文档
+    cxt.translate(0.5, 0.5);
+    //设置画布大小
+    document.getElementById("myCanvas").setAttribute("width", canvasSize.maxX);
+    document.getElementById("myCanvas").setAttribute("height", canvasSize.maxY);
+    cxt.clearRect(0, 0, c.width, c.height);
+    for (var m = 0; m < 9; m++) {
+        point[m] = new Array(m);    //在声明二维
+        for (var n = 0; n < 2; n++) {
+            point[m][n] = vertex_pos[m][n];
+        }
+    }
+    draw();
+    drawShapes();
+    c.addEventListener("mousedown", mouseDown, false);
+
+    //end
+    //鼠标按下事件
+    function mouseDown(event) {
+        // console.log("down");
+        let mouseEvent = window.event || event;
+        var hight = -1;
+        //鼠标按下时位置
+        mouseX = mouseEvent.offsetX;
+        mouseY = mouseEvent.offsetY;
+
+        for (var i = 0; i < 9; i++) {
+            if (ischlik(point[i][0], point[i][1], mouseX, mouseY)) {
+                chlik = true;
+                if (i > hight) {
+                    dragHoldX = mouseX - point[i][0];
+                    dragHoldY = mouseY - point[i][1];
+                    hight = i;
+                    index = i;
+                }
+            }
+        }
+        if (chlik) {
+            // console.log("chilk");
+            window.addEventListener("mousemove", mouseMove, false);
+        }
+        c.removeEventListener("mousedown", mouseMove, false);
+        window.addEventListener("mouseup", mouseUp, false);
+        if (event.preventDefault) {
+            event.preventDefault();
+        } else if (event.returnValue) {
+            event.returnValue = false;
+        }
+        return false;
+    }
+
+    //鼠标松开事件
+    function mouseUp() {
+        // console.log("up");
+        c.addEventListener("mousedown", mouseDown, false);
+        window.removeEventListener("mouseup", mouseUp, false);
+        if (chlik) {
+            chlik = false;
+            window.removeEventListener("mousemove", mouseMove, false);
+        }
+    }
+
+    //鼠标移动事件
+    function mouseMove() {
+        // console.log("move");
+        let mouseEvent = window.event || event;
+        var posX;
+        var posY;
+        var minX = 0;
+        var maxX = c.width;
+        var minY = 0;
+        var maxY = c.height;
+        //获取鼠标位置
+        mouseX = mouseEvent.offsetX;
+        mouseY = mouseEvent.offsetY;
+
+        //避免越界
+        posX = mouseX - dragHoldX;
+        posX = (posX < minX) ? minX : ((posX > maxX) ? maxX : posX);
+        posY = mouseY - dragHoldY;
+        posY = (posY < minY) ? minY : ((posY > maxY) ? maxY : posY);
+
+        point[index][0] = posX;
+        point[index][1] = posY;
+
+        cxt.clearRect(0, 0, c.width, c.height);
+        draw();
+        drawShapes();
+    }
+
+    //求交点：
+    function segmentsIntr(a, b, c, d, arr) {
+        // console.log(a[0], "  ", a[1], "  ", b[0], "  ", b[1], "  ", c[0], "  ", c[1], "  ", d[0], "  ", d[1]);
+        // 三角形abc 面积的2倍
+        var area_abc = (a[0] - c[0]) * (b[1] - c[1]) - (a[1] - c[1]) * (b[0] - c[0]);
+
+        // 三角形abd 面积的2倍
+        var area_abd = (a[0] - d[0]) * (b[1] - d[1]) - (a[1] - d[1]) * (b[0] - d[0]);
+
+        // 面积符号相同则两点在线段同侧,不相交
+        if (area_abc * area_abd >= 0) {
+            return false;
+        }
+
+        // 三角形cda 面积的2倍
+        var area_cda = (c[0] - a[0]) * (d[1] - a[1]) - (c[1] - a[1]) * (d[0] - a[0]);
+        // 三角形cdb 面积的2倍
+        // 注意: 这里有一个小优化.不需要再用公式计算面积,而是通过已知的三个面积加减得出.
+        var area_cdb = area_cda + area_abc - area_abd;
+        if (area_cda * area_cdb > 0) {
+            return false;
+        }
+
+        //计算交点坐标
+        var t = area_cda / (area_abd - area_abc);
+        var dx = t * (b[0] - a[0]),
+            dy = t * (b[1] - a[1]);
+        arr[0] = Math.round(a[0] + dx);
+        arr[1] = Math.round(a[1] + dy);
+        return arr;
+
+    }
+
+    //按照数组的第２个值升序排列
+    function ascend(x, y) {
+        return x[1] - y[1];
+    }
+
+    function ascend1(x, y) {
+        return x[0] - y[0];
+    }
+
+    //是否选中顶点
+    function ischlik(px, py, mx, my) {
+
+        var dx;
+        var dy;
+        dx = mx - px;
+        dy = my - py;
+
+        return (dx * dx + dy * dy < 100);
+    }
+
+    //画点
+    function drawShapes() {
+        for (var i = 0; i < 9; i++) {
+            //不能用fill，所以把线宽设定为半径的两倍。。。
+            // cxt.beginPath();
+            circle(point[i][0], point[i][1], 10, [255, 0, 0]);
+            // console.log(point[i][0],point[i][1]);
+            // cxt.lineWidth = shapes[i].rad * 2;
+            // cxt.lineWidth = 5 * 2;
+            // cxt.strokeStyle = 'red';
+            // cxt.stroke();
+        }
+    }
+
+    // 中点画圆法
+    function circle(x, y, r, color) {
+        var tx = 0, ty = r, d = 1 - r;
+
+        while (tx <= ty) {
+            // 利用圆的八分对称性画点
+            drawLine(cxt, x + tx, y + ty, x + tx, y - ty, color);
+            drawLine(cxt, x - tx, y + ty, x - tx, y - ty, color);
+            drawLine(cxt, x + ty, y + tx, x + ty, y - tx, color);
+            drawLine(cxt, x - ty, y + tx, x - ty, y - tx, color);
+            if (d < 0) {
+                d += 2 * tx + 3;
+            } else {
+                d += 2 * (tx - ty) + 5;
+                ty--;
+            }
+            tx++;
+        }
+    }
+
+    //填充
+    function draw() {
+
+        var node = [];         //先声明一维
+        for (var m = 0; m < 3000; m++) {
+            node[m] = new Array(m);    //在声明二维
+            for (var n = 0; n < 3; n++) {
+                node[m][n] = 0;     //存放交点坐标的数组
+            }
+        }
+        for (var j = 0; j < 5; j++) {
+            if (j === 2) {
+
+            } else {
+
+                var temp = 0;
+                for (var i = 0; i < maxY; i++) {
+                    var first1 = [0, i];
+                    var second1 = [1024, i];
+                    var arr1 = new Array(2);
+                    if (segmentsIntr(point[j], point[j + 1], first1, second1, arr1)) {    //0...1
+                        node[temp][0] = arr1[0];
+                        node[temp][1] = arr1[1];
+                        if (j < 2) {
+                            node[temp][2] = j;
+                        } else {
+                            node[temp][2] = j - 1;
+                        }
+                        temp++;
+                    }
+                }
+                for (var i = 0; i < maxY; i++) {
+                    try {
+                        var first2 = [0, i];
+                        var second2 = [1024, i];
+                        var arr2 = new Array(2);
+                        if (segmentsIntr(point[j + 3], point[j + 4], first2, second2, arr2)) {    //3...4
+                            node[temp][0] = arr2[0];
+                            node[temp][1] = arr2[1];
+                            if (j < 2) {
+                                node[temp][2] = j;
+                            } else {
+                                node[temp][2] = j - 1;
+                            }
+                            temp++;
+                        }
+                    } catch (e) {
+
+                    }
+                }
+                for (var i = 0; i < maxY; i++) {
+                    try {
+                        var first3 = [0, i];
+                        var second3 = [1024, i];
+                        var arr3 = new Array(2);
+                        if (segmentsIntr(point[j], point[j + 3], first3, second3, arr3)) {    //0...3
+                            node[temp][0] = arr3[0];
+                            node[temp][1] = arr3[1];
+                            if (j < 2) {
+                                node[temp][2] = j;
+                            } else {
+                                node[temp][2] = j - 1;
+                            }
+                            temp++;
+                        }
+                    } catch (e) {
+
+                    }
+                }
+                for (var i = 0; i < maxY; i++) {
+                    try {
+                        var first4 = [0, i];
+                        var second4 = [1024, i];
+                        var arr4 = new Array(2);
+                        if (segmentsIntr(point[j + 1], point[j + 4], first4, second4, arr4)) {    //1...4
+                            node[temp][0] = arr4[0];
+                            node[temp][1] = arr4[1];
+                            if (j < 2) {
+                                node[temp][2] = j;
+                            } else {
+                                node[temp][2] = j - 1;
+                            }
+                            temp++;
+                        }
+                    } catch (e) {
+
+                    }
+                }
+                //排序
+                node.sort(ascend);
+
+                //一个一个填充
+                let node2 = [];
+                let node3 = [];
+                let node4 = [];
+                let count = 0;
+                for (var i = 0; i < node.length; i++) {
+                    try {
+                        if (node[i][1] === node[i + 1][1]) {
+                            node4[count] = node[i].concat();
+                            count++;
+                            // if (node[i][0] < node[i + 1][0]) {
+                            //     drawLine(cxt, node[i][0], node[i][1], node[i + 1][0], node[i + 1][1], vertex_color[node[i + 1][2]]);
+                            // } else if (node[i][0] > node[i + 1][0]) {
+                            //     drawLine(cxt, node[i][0], node[i][1], node[i + 1][0], node[i + 1][1], vertex_color[node[i][2]]);
+                            // }
+                        } else {
+                            node4[count] = node[i].concat();
+                            count++;
+                            node3.sort(ascend1);
+                            switch (node3.length) {
+                                case 2:
+                                    //两个交点
+                                    drawLine(cxt, node3[0][0], node3[0][1], node3[1][0], node3[1][1], vertex_color[node3[1][2]]);
+                                    break;
+                                case 3:
+                                    //三个交点
+                                    drawLine(cxt, node3[0][0], node3[0][1], node3[2][0], node3[2][1], vertex_color[node3[1][2]]);
+                                    break;
+                                case 4:
+                                    //四个交点
+                                    if (node2.length === 2 && node4.length === 2) {
+                                        //过两个顶点，上下两条线有两个交点
+                                        drawLine(cxt, node3[0][0], node3[0][1], node3[3][0], node3[3][1], vertex_color[node3[1][2]]);
+                                    } else {
+                                        //第一个交点和第二个交点相连，第三个交点和第四个交点相连
+                                        drawLine(cxt, node3[0][0], node3[0][1], node3[1][0], node3[1][1], vertex_color[node3[0][2]]);
+                                        drawLine(cxt, node3[2][0], node3[2][1], node3[3][0], node3[3][1], vertex_color[node3[2][2]]);
+                                    }
+                                    break;
+                            }
+                            node2 = node3.concat();
+                            node3 = node4.concat();
+                            node4 = [];
+                            count = 0;
+                        }
+                    } catch (e) {
+                        console.log(node[i][i + 1]);
+                    }
+                }
+                var node1 = [];         //先声明一维
+                for (var m = 0; m < 3000; m++) {
+                    node1[m] = new Array(m);    //在声明二维
+                    for (var n = 0; n < 3; n++) {
+                        node1[m][n] = 0;
+                    }
+                }
+                node = node1.concat();      //数组重置
+            }
+        }
+    }
+
+</script>
+</body>
+</html>

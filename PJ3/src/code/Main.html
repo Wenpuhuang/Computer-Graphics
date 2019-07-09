@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D_walker</title>
+    <script src="../../lib/webgl-utils.js"></script>
+    <script src="../../lib/webgl-debug.js"></script>
+    <script src="../../lib/cuon-utils.js"></script>
+    <script src="../../lib/cuon-matrix.js"></script>
+    <script src="MyVector3.js"></script>
+    <script src="scene.js"></script>
+    <script src="objLoader.js"></script>
+    <script src="camera.js"></script>
+    <script src="objectLoader.js"></script>
+</head>
+<script type="text/javascript">
+
+    // Vertex shader for texture drawing
+    var TEXTURE_VSHADER_SOURCE =
+        'attribute vec4 a_Position;\n' +
+        'attribute vec4 a_Normal;\n' +
+        'attribute vec2 a_TexCoord;\n' +
+        'uniform mat4 u_MvpMatrix;\n' +
+        'uniform mat4 u_NormalMatrix;\n' +
+        'varying float v_NdotL;\n' +
+        'varying vec2 v_TexCoord;\n' +
+        'void main() {\n' +
+        '  vec3 lightDirection = vec3(-0.35, 0.35, 0.87);\n' + //平行光
+        '  vec3 u_AmbientLight = vec3(0.2,0.2,0.2);\n' +
+        '  gl_Position = u_MvpMatrix * a_Position;\n' +
+        '  vec3 normal = normalize(vec3(u_NormalMatrix * a_Normal));\n' +
+        '  v_NdotL = max(dot(normal, lightDirection + u_AmbientLight), 0.0);\n' +
+        '  v_TexCoord = a_TexCoord;\n' +
+        '}\n';
+
+    // Fragment shader for texture drawing
+    var TEXTURE_FSHADER_SOURCE =
+        '#ifdef GL_ES\n' +
+        'precision mediump float;\n' +
+        '#endif\n' +
+        'uniform sampler2D u_Sampler;\n' +
+        'varying vec2 v_TexCoord;\n' +
+        'varying float v_NdotL;\n' +
+        'void main() {\n' +
+        '  vec4 color = texture2D(u_Sampler, v_TexCoord);\n' +
+        '  gl_FragColor = vec4(color.rgb * v_NdotL, color.a);\n' +
+        '}\n';
+
+    let last = 0;
+    let loaders = [];
+
+    function main() {
+
+        // Retrieve <canvas> element
+        var canvas = document.getElementById('webgl');
+
+        // Get the rendering context for WebGL
+        var gl = getWebGLContext(canvas);
+        if (!gl) {
+            console.log('Failed to get the rendering context for WebGL');
+            return;
+        }
+
+        Camera.init();
+        getLoaders(gl);
+
+        // Initialize shaders
+
+        var texProgram = createProgram(gl, TEXTURE_VSHADER_SOURCE, TEXTURE_FSHADER_SOURCE);
+
+        // Get storage locations of attribute and uniform variables in program object for texture drawing
+        texProgram.a_Position = gl.getAttribLocation(texProgram, 'a_Position');
+        texProgram.a_Normal = gl.getAttribLocation(texProgram, 'a_Normal');
+        texProgram.a_TexCoord = gl.getAttribLocation(texProgram, 'a_TexCoord');
+        texProgram.u_MvpMatrix = gl.getUniformLocation(texProgram, 'u_MvpMatrix');
+        texProgram.u_NormalMatrix = gl.getUniformLocation(texProgram, 'u_NormalMatrix');
+        texProgram.u_Sampler = gl.getUniformLocation(texProgram, 'u_Sampler');
+
+        if (texProgram.a_Position < 0 || texProgram.a_Normal < 0 || texProgram.a_TexCoord < 0 ||
+            !texProgram.u_MvpMatrix || !texProgram.u_NormalMatrix || !texProgram.u_Sampler) {
+            console.log('Failed to get the storage location of attribute or uniform variable');
+            return;
+        }
+
+        var floorProgram = createProgram(gl, TEXTURE_VSHADER_SOURCE, TEXTURE_FSHADER_SOURCE);
+
+        // Get storage locations of attribute and uniform variables in program object for texture drawing
+        floorProgram.a_Position = gl.getAttribLocation(floorProgram, 'a_Position');
+        floorProgram.a_Normal = gl.getAttribLocation(floorProgram, 'a_Normal');
+        floorProgram.a_TexCoord = gl.getAttribLocation(floorProgram, 'a_TexCoord');
+        floorProgram.u_MvpMatrix = gl.getUniformLocation(floorProgram, 'u_MvpMatrix');
+        floorProgram.u_NormalMatrix = gl.getUniformLocation(floorProgram, 'u_NormalMatrix');
+        floorProgram.u_Sampler = gl.getUniformLocation(floorProgram, 'u_Sampler');
+
+        if (floorProgram.a_Position < 0 || floorProgram.a_Normal < 0 || floorProgram.a_TexCoord < 0 ||
+            !floorProgram.u_MvpMatrix || !floorProgram.u_NormalMatrix || !floorProgram.u_Sampler) {
+            console.log('Failed to get the storage location of attribute or uniform variable');
+            return;
+        }
+
+        // Set the vertex information
+        var cube = initVertexBuffers(gl);
+        if (!cube) {
+            console.log('Failed to set the vertex information');
+            return;
+        }
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+        var viewProjMatrix = Camera.getMvpMatrix();
+
+
+        addEvent();
+
+        var texture = initTextures(gl, texProgram, 0);
+        let texture1 = initTextures1(gl, floorProgram, 1);
+
+        var tick = (now) => {
+
+
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); // Clear color and depth buffers
+
+
+            let elapsed = now - last;
+            last = now;
+
+            //键盘事件
+            let posX = (Camera.state.moveUp - Camera.state.moveDown) * MOVE_VELOCITY * elapsed / 1000;
+            let posY = (Camera.state.moveRight - Camera.state.moveLeft) * MOVE_VELOCITY * elapsed / 1000;
+            let rotX = (Camera.state.rotateUp - Camera.state.rotateDown) * ROT_VELOCITY * elapsed / 1000 / 180 * Math.PI;
+            let rotY = (Camera.state.rotateRight - Camera.state.rotateLeft) * ROT_VELOCITY * elapsed / 1000 / 180 * Math.PI;
+            if (posX || posY)
+                Camera.move(posX, posY);
+            if (rotX || rotY)
+                Camera.rotate(rotX, rotY);
+
+            viewProjMatrix = Camera.getMvpMatrix();
+
+
+            drawTexCube(gl, texProgram, cube, texture, viewProjMatrix);
+//
+
+            drawTexFloor(gl, floorProgram, cube, texture1, viewProjMatrix);
+//            texture = initTextures(gl, texProgram, 0);
+            for (let loader of loaders) {
+                loader.render(now);
+            }
+
+            window.requestAnimationFrame(tick, canvas);
+        };
+        tick();
+    }
+
+    function addEvent() {
+        let keys = new Map();
+        keys.set('W', 'moveUp');
+        keys.set('S', 'moveDown');
+        keys.set('A', 'moveLeft');
+        keys.set('D', 'moveRight');
+        keys.set('I', 'rotateUp');
+        keys.set('K', 'rotateDown');
+        keys.set('J', 'rotateLeft');
+        keys.set('L', 'rotateRight');
+        keys.set('F', 'pointLight');
+
+        keys.forEach(() => {
+            window.addEventListener('keydown', (e) => {
+                let key = String.fromCharCode(e.which);
+                if (!keys.get(key))
+                    return;
+                console.log(key);
+                if (key === 'F') {
+                    Camera.state[keys.get(key)] = !Camera.state[keys.get(key)];
+                } else
+                    Camera.state[keys.get(key)] = 1;
+            });
+
+            window.addEventListener('keyup', (e) => {
+                let key = String.fromCharCode(e.which);
+                if (!keys.get(key))
+                    return;
+                if (key === 'F')
+                    return;
+                Camera.state[keys.get(key)] = 0;
+            });
+        });
+
+
+    }
+
+    //加载物体
+    function getLoaders(gl) {
+        for (let object of ObjectList) {
+            let loader = new ObjectLoader(object, {
+                'gl': gl
+            }).init();
+
+            // 通过正余弦的周期函数，让其做一个圆周运动
+            if (object.objFilePath.indexOf('bird') > 0) {
+                loader.nextTick = (now) => {
+                    let rotate = (now / 1000 * 120) % 360;
+                    let trans = (now / 500);
+                    loader.o.transform[1].content[0] = rotate;
+                    loader.o.transform[0].content[0] = Math.sin(trans) * 5;
+                    loader.o.transform[0].content[1] = Math.cos(trans) * 3 + 10;
+                    loader.o.transform[0].content[2] = Math.sin(trans) * 4 + 10;
+                }
+            }
+
+            loaders.push(loader);
+        }
+    }
+
+    function initVertexBuffers(gl) {
+        // Create a cube
+        //    v6----- v5
+        //   /|      /|
+        //  v1------v0|
+        //  | |     | |
+        //  | |v7---|-|v4
+        //  |/      |/
+        //  v2------v3
+
+        var vertices = new Float32Array(boxRes.vertex);
+
+        var normals = new Float32Array([   // Normal
+            0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0,     // v0-v1-v2-v3 front
+            1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,     // v0-v3-v4-v5 right
+            0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0,     // v0-v5-v6-v1 up
+            -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0,     // v1-v6-v7-v2 left
+            0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0,     // v7-v4-v3-v2 down
+            0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0      // v4-v7-v6-v5 back
+        ]);
+
+        var floor_narmal = new Float32Array([
+            0.0, 1.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 1.0, 0.0
+        ]);
+        var cube_texCoords = new Float32Array(boxRes.texCoord);
+
+        var cube_indices = new Uint8Array(boxRes.index);
+
+        var floor = new Float32Array(floorRes.vertex);
+        var floor_texCoords = new Float32Array(floorRes.texCoord);
+        var floor_indices = new Uint8Array(floorRes.index);
+        //利用Object将多个缓冲区对象一起返回
+        var o = new Object();
+
+        //将顶点信息写入缓冲区对象
+        o.vertexBuffer = initArrayBufferForLaterUse(gl, vertices, 3, gl.FLOAT);
+        o.normalBuffer = initArrayBufferForLaterUse(gl, normals, 3, gl.FLOAT);
+        o.texCoordBuffer = initArrayBufferForLaterUse(gl, cube_texCoords, 2, gl.FLOAT);
+        o.indexBuffer = initElementArrayBufferForLaterUse(gl, cube_indices, gl.UNSIGNED_BYTE);
+
+        o.floorBuffer = initArrayBufferForLaterUse(gl, floor, 3, gl.FLOAT);
+        o.floorTexCoordBuffer = initArrayBufferForLaterUse(gl, floor_texCoords, 2, gl.FLOAT);
+        o.floorIndexBuffer = initElementArrayBufferForLaterUse(gl, floor_indices, gl.UNSIGNED_BYTE);
+        o.floorNormalBuffer = initArrayBufferForLaterUse(gl, floor_narmal, 3, gl.FLOAT);
+        if (!o.vertexBuffer || !o.normalBuffer || !o.texCoordBuffer || !o.indexBuffer
+            || !o.floorBuffer || !o.floorTexCoordBuffer || !o.floorIndexBuffer) return null;
+        o.numIndices = cube_indices.length;
+        o.floorNumIndices = floor_indices.length;
+        //取消绑定缓冲区对象
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+        return o;
+    }
+
+    function initTextures(gl, program, temp) {
+        var texture = gl.createTexture();   // Create a texture object
+        if (!texture) {
+            console.log('Failed to create the texture object');
+            return null;
+        }
+
+        var image = new Image();  // Create a image object
+        if (!image) {
+            console.log('Failed to create the image object');
+            return null;
+        }
+        // Register the event handler to be called when image loading is completed
+        image.onload = function () {
+            gl.useProgram(program);
+            // Write the image data to texture object
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, temp);  // Flip the image Y coordinate
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+            // Pass the texure unit 0 to u_Sampler
+
+            gl.uniform1i(program.u_Sampler, temp);
+
+            gl.bindTexture(gl.TEXTURE_2D, null); // Unbind texture
+        };
+
+        image.src = '../image/boxface.bmp';
+        return texture;
+    }
+
+    function initTextures1(gl, program, temp) {
+        var texture = gl.createTexture();   // Create a texture object
+        if (!texture) {
+            console.log('Failed to create the texture object');
+            return null;
+        }
+
+        var image = new Image();  // Create a image object
+        if (!image) {
+            console.log('Failed to create the image object');
+            return null;
+        }
+        // Register the event handler to be called when image loading is completed
+        image.onload = function () {
+            gl.useProgram(program);
+            // Write the image data to texture object
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);  // Flip the image Y coordinate
+
+            gl.activeTexture(gl.TEXTURE1);
+
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+//            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+//            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+//
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+
+            gl.uniform1i(program.u_Sampler, 0);
+
+
+            gl.bindTexture(gl.TEXTURE_2D, null); // Unbind texture
+        };
+
+        image.src = '../image/floor.jpg';
+
+
+        return texture;
+    }
+
+
+    function drawTexCube(gl, program, o, texture, viewProjMatrix) {
+        gl.useProgram(program);   // Tell that this program object is used
+
+        // Assign the buffer objects and enable the assignment
+        initAttributeVariable(gl, program.a_Position, o.vertexBuffer);  // Vertex coordinates
+        initAttributeVariable(gl, program.a_Normal, o.normalBuffer);    // Normal
+        initAttributeVariable(gl, program.a_TexCoord, o.texCoordBuffer);// Texture coordinates
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.indexBuffer); // Bind indices
+
+        // Bind texture object to texture unit 0
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+
+        drawCube(gl, program, o, viewProjMatrix); // Draw
+    }
+
+    function drawTexFloor(gl, program, o, texture, viewProjMatrix) {
+        gl.useProgram(program);   // Tell that this program object is used
+
+        // Assign the buffer objects and enable the assignment
+        initAttributeVariable(gl, program.a_Position, o.floorBuffer);  // Vertex coordinates
+        initAttributeVariable(gl, program.a_Normal, o.floorNormalBuffer);    // Normal
+        initAttributeVariable(gl, program.a_TexCoord, o.floorTexCoordBuffer);// Texture coordinates
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.floorIndexBuffer); // Bind indices
+
+        // Bind texture object to texture unit 0
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+
+        drawFllor(gl, program, o, viewProjMatrix);
+    }
+
+    //分配缓冲区对象并启用分配
+    function initAttributeVariable(gl, a_attribute, buffer) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.vertexAttribPointer(a_attribute, buffer.num, buffer.type, false, 0, 0);
+        gl.enableVertexAttribArray(a_attribute);
+    }
+
+    //坐标转换矩阵
+    var g_modelMatrix = new Matrix4();
+    var g_mvpMatrix = new Matrix4();
+    var g_normalMatrix = new Matrix4();
+
+    function drawCube(gl, program, o, viewProjMatrix) {
+        //计算模型矩阵
+        g_modelMatrix.setTranslate(boxRes.translate[0], boxRes.translate[1], boxRes.translate[2]);
+        g_modelMatrix.scale(boxRes.scale[0], boxRes.scale[1], boxRes.scale[2])
+
+        // 计算法线的变换矩阵并将其传递给u_NormalMatrix
+        g_normalMatrix.setInverseOf(g_modelMatrix);
+        g_normalMatrix.transpose();
+        gl.uniformMatrix4fv(program.u_NormalMatrix, false, g_normalMatrix.elements);
+
+        // Calculate model view projection matrix and pass it to u_MvpMatrix
+        g_mvpMatrix.set(viewProjMatrix);
+        g_mvpMatrix.multiply(g_modelMatrix);
+        gl.uniformMatrix4fv(program.u_MvpMatrix, false, g_mvpMatrix.elements);
+
+        gl.drawElements(gl.TRIANGLES, o.numIndices, o.indexBuffer.type, 0);   // Draw
+    }
+
+    function drawFllor(gl, program, o, viewProjMatrix) {
+        //计算模型矩阵
+        g_modelMatrix.setIdentity();
+        g_modelMatrix.translate(floorRes.translate[0], floorRes.translate[1], floorRes.translate[2]);
+        g_modelMatrix.scale(floorRes.scale[0], floorRes.scale[1], floorRes.scale[2]);
+
+        // 计算法线的变换矩阵并将其传递给u_NormalMatrix
+        g_normalMatrix.setInverseOf(g_modelMatrix);
+        g_normalMatrix.transpose();
+        gl.uniformMatrix4fv(program.u_NormalMatrix, false, g_normalMatrix.elements);
+
+        // Calculate model view projection matrix and pass it to u_MvpMatrix
+        g_mvpMatrix.set(viewProjMatrix);
+        g_mvpMatrix.multiply(g_modelMatrix);
+        gl.uniformMatrix4fv(program.u_MvpMatrix, false, g_mvpMatrix.elements);
+
+//        gl.drawElements(gl.TRIANGLE_STRIP, o.floorNumIndices, o.floorIndexBuffer.type, o.numIndices);   // Draw
+        gl.drawElements(gl.TRIANGLES, o.floorNumIndices, o.floorIndexBuffer.type, 0);   // Draw
+
+    }
+
+
+    function initArrayBufferForLaterUse(gl, data, num, type) {
+        var buffer = gl.createBuffer();   // Create a buffer object
+        if (!buffer) {
+            console.log('Failed to create the buffer object');
+            return null;
+        }
+        // Write date into the buffer object
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+
+        // Keep the information necessary to assign to the attribute variable later
+        buffer.num = num;
+        buffer.type = type;
+
+        return buffer;
+    }
+
+    function initElementArrayBufferForLaterUse(gl, data, type) {
+        var buffer = gl.createBuffer();　  // Create a buffer object
+        if (!buffer) {
+            console.log('Failed to create the buffer object');
+            return null;
+        }
+        // Write date into the buffer object
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, gl.STATIC_DRAW);
+
+        buffer.type = type;
+
+        return buffer;
+    }
+
+</script>
+<body onload="main()">
+<canvas id="webgl" width="400" height="400">
+    Please use a browser that supports "canvas"
+</canvas>
+<p id="messageBox">Debug Message</p>
+<p>w 向前走</p>
+<p>s 向后走</p>
+<p>a 向左走</p>
+<p>d 向右走</p>
+<p>i 向上转</p>
+<p>k 向下转</p>
+<p>j 向左转</p>
+<p>l 向右转</p>
+
+</body>
+</html>
